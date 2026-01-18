@@ -15,7 +15,6 @@ export default function TambayHub() {
   const [profile, setProfile] = useState<any>(null);
   const [email, setEmail] = useState("");
   const [otpSent, setOtpSent] = useState(false);
-  const [usernameInput, setUsernameInput] = useState("");
   const [posts, setPosts] = useState<any[]>([]);
   const [inputText, setInputText] = useState("");
   const [likedPosts, setLikedPosts] = useState<number[]>([]);
@@ -23,10 +22,39 @@ export default function TambayHub() {
   const [actionLoading, setActionLoading] = useState(false);
   const [countdown, setCountdown] = useState(0);
 
-  // Email Validation Logic
+  // Email Validation
   const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.toLowerCase());
   const isEmailValid = validateEmail(email);
 
+  // --- PERSISTENT LOGIN LOGIC ---
+  useEffect(() => {
+    // 1. Check for an existing session on mount
+    const initAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        setUser(session.user);
+        await fetchProfile(session.user.id);
+      }
+      setLoading(false);
+    };
+
+    initAuth();
+
+    // 2. Listen for auth changes (Login/Logout/Token Refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_IN' && session?.user) {
+        setUser(session.user);
+        await fetchProfile(session.user.id);
+      } else if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setProfile(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Timer logic for resend button
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (countdown > 0) {
@@ -35,24 +63,21 @@ export default function TambayHub() {
     return () => clearInterval(timer);
   }, [countdown]);
 
+  // Real-time Feed Listener
   useEffect(() => {
-    checkUser();
     fetchGlobalPosts();
     const channel = supabase.channel('global-updates').on('postgres_changes', 
       { event: '*', schema: 'public', table: 'posts' }, () => fetchGlobalPosts()).subscribe();
+    
     const savedLikes = localStorage.getItem('tambay_likes');
     if (savedLikes) setLikedPosts(JSON.parse(savedLikes));
+    
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  async function checkUser() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      setUser(user);
-      const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
-      setProfile(prof);
-    }
-    setLoading(false);
+  async function fetchProfile(userId: string) {
+    const { data: prof } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle();
+    setProfile(prof);
   }
 
   async function fetchGlobalPosts() {
@@ -80,62 +105,51 @@ export default function TambayHub() {
     setActionLoading(false);
   }
 
-  // --- NEW RESET FUNCTION ---
   function handleBackToLogin() {
-    setEmail("");        // Clears the input field text
-    setOtpSent(false);   // Returns to login screen
-    setCountdown(0);     // Resets timer
+    setEmail("");
+    setOtpSent(false);
+    setCountdown(0);
+  }
+
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut();
+    if (error) toast.error("Logout failed");
+    else toast.success("Signed out successfully");
   }
 
   if (loading) return (
     <div className="bg-[#020617] min-h-screen flex items-center justify-center">
-      <Loader2 className="animate-spin text-indigo-500" size={40} />
+      <div className="text-center">
+        <Loader2 className="animate-spin text-indigo-500 mx-auto mb-4" size={40} />
+        <p className="text-slate-500 font-medium animate-pulse">Entering Tambayan...</p>
+      </div>
     </div>
   );
 
   return (
     <div className="bg-[#020617] min-h-screen pb-32 text-slate-100 antialiased font-sans">
-      <Toaster 
-        position="top-center" 
-        theme="dark" 
-        toastOptions={{
-          style: {
-            background: 'rgba(30, 41, 59, 0.7)',
-            backdropFilter: 'blur(16px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '24px',
-            textAlign: 'center',
-            display: 'flex',
-            justifyContent: 'center'
-          },
-        }}
-      />
+      <Toaster position="top-center" theme="dark" />
 
       {!user ? (
+        /* LOGIN SCREEN */
         <div className="min-h-screen flex items-center justify-center p-6">
           <div className="max-w-md w-full bg-slate-900/40 border border-white/10 p-12 rounded-[3.5rem] backdrop-blur-3xl shadow-2xl text-center">
-            
             {!otpSent ? (
-              <form onSubmit={handleSendOTP} noValidate className="space-y-6">
+              <form onSubmit={handleSendOTP} className="space-y-6">
                 <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center font-black text-3xl mx-auto mb-2 text-white shadow-lg shadow-indigo-600/20">T</div>
                 <div>
                   <h2 className="text-3xl font-bold tracking-tighter italic">TambayHub</h2>
-                  <p className="text-slate-500 text-sm">Sign in to your account</p>
+                  <p className="text-slate-500 text-sm">Instant access. No passwords.</p>
                 </div>
                 
                 <div className="relative">
                   <input 
-                    type="text" 
-                    inputMode="email"
+                    type="email" 
                     placeholder="name@email.com" 
                     value={email} 
                     onChange={e => setEmail(e.target.value)} 
-                    className={`w-full bg-white/5 border rounded-2xl p-4 text-center outline-none transition-all font-bold placeholder:text-slate-600 ${
-                      email.length === 0 
-                        ? 'border-white/10' 
-                        : isEmailValid 
-                          ? 'border-green-500/50' 
-                          : 'border-rose-500/50'
+                    className={`w-full bg-white/5 border rounded-2xl p-4 text-center outline-none transition-all font-bold ${
+                      email.length === 0 ? 'border-white/10' : isEmailValid ? 'border-green-500/50' : 'border-rose-500/50'
                     }`} 
                   />
                   {email.length > 0 && (
@@ -146,84 +160,71 @@ export default function TambayHub() {
                 </div>
 
                 <button 
-                  type="submit"
                   disabled={actionLoading || !isEmailValid} 
                   className={`w-full py-4 rounded-2xl font-bold transition-all ${
-                    isEmailValid ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-600/20' : 'bg-slate-800 text-slate-500 opacity-50'
+                    isEmailValid ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-500'
                   }`}
                 >
                   {actionLoading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "Send Magic Link"}
                 </button>
               </form>
             ) : (
-              <div className="animate-in fade-in zoom-in duration-500">
+              <div className="animate-in fade-in zoom-in">
                 <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
                   <CheckCircle2 size={40} className="text-green-500" />
                 </div>
-                <h2 className="text-2xl font-bold mb-2 text-white">Check your inbox</h2>
-                <p className="text-slate-500 text-sm mb-10 px-4 leading-relaxed">
-                  We've sent a secure login link to <span className="text-white font-bold">{email}</span>.
-                </p>
-                
-                <div className="space-y-4">
-                  <button 
-                    onClick={() => handleSendOTP()} 
-                    disabled={countdown > 0}
-                    className={`flex items-center gap-2 mx-auto text-sm font-bold px-8 py-3 rounded-2xl border border-white/5 transition-all ${
-                      countdown > 0 ? 'text-slate-600 bg-transparent' : 'text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20'
-                    }`}
-                  >
-                    <RefreshCcw size={16} className={actionLoading ? "animate-spin" : ""} />
-                    {countdown > 0 ? `Resend link in ${countdown}s` : "Resend Link"}
-                  </button>
-                  
-                  <button 
-                    onClick={handleBackToLogin} 
-                    className="block w-full text-slate-500 text-xs hover:text-white transition-colors pt-2"
-                  >
-                    Use a different email address
-                  </button>
-                </div>
+                <h2 className="text-2xl font-bold mb-2 text-white">Check your email</h2>
+                <p className="text-slate-500 text-sm mb-10">We've sent a login link to <b>{email}</b>.</p>
+                <button onClick={handleBackToLogin} className="text-slate-500 text-xs hover:text-white">Use different email</button>
               </div>
             )}
           </div>
         </div>
       ) : (
-        /* FEED SECTION REMAINS THE SAME */
+        /* MAIN FEED */
         <>
           <nav className="bg-[#020617]/80 backdrop-blur-2xl border-b border-white/5 sticky top-0 z-[100] h-16 flex items-center justify-between px-6">
             <div className="flex items-center gap-2 font-black text-xl italic text-white tracking-tighter">TambayHub</div>
-            <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="p-2.5 bg-white/5 hover:text-red-500 rounded-2xl transition-all"><LogOut size={20}/></button>
+            <button onClick={handleLogout} className="p-2.5 bg-white/5 hover:text-red-500 rounded-2xl transition-all"><LogOut size={20}/></button>
           </nav>
 
           <main className="max-w-xl mx-auto pt-8 px-4">
-            {/* Feed contents... */}
-            <div className="bg-slate-900/40 border border-white/10 rounded-[2.5rem] p-6 mb-10 shadow-2xl backdrop-blur-md">
-              <textarea value={inputText} onChange={e => setInputText(e.target.value)} placeholder="Ano'ng kwento?" className="w-full bg-transparent text-xl outline-none mb-4 resize-none font-medium text-white" rows={2}/>
+            <div className="bg-slate-900/40 border border-white/10 rounded-[2.5rem] p-6 mb-10">
+              <textarea 
+                value={inputText} 
+                onChange={e => setInputText(e.target.value)} 
+                placeholder="Ano'ng kwento?" 
+                className="w-full bg-transparent text-xl outline-none mb-4 resize-none font-medium text-white" 
+                rows={2}
+              />
               <div className="flex justify-between items-center pt-4 border-t border-white/5">
-                <button className="p-2 text-slate-600 rounded-xl"><ImageIcon size={20}/></button>
-                <button onClick={() => {
-                   if (!inputText.trim()) return;
-                   setActionLoading(true);
-                   supabase.from('posts').insert([{ content: inputText, user_id: user.id, likes: 0 }])
-                   .then(() => { toast.success("Story shared!"); setInputText(""); fetchGlobalPosts(); setActionLoading(false); });
-                }} disabled={actionLoading || !inputText.trim()} className="bg-indigo-600 px-8 py-2.5 rounded-2xl font-bold active:scale-95 transition-all shadow-lg shadow-indigo-600/20">Post Story</button>
+                <button className="p-2 text-slate-600"><ImageIcon size={20}/></button>
+                <button 
+                  onClick={() => {
+                    if (!inputText.trim()) return;
+                    setActionLoading(true);
+                    supabase.from('posts').insert([{ content: inputText, user_id: user.id }])
+                      .then(() => { setInputText(""); fetchGlobalPosts(); setActionLoading(false); });
+                  }}
+                  disabled={actionLoading || !inputText.trim()}
+                  className="bg-indigo-600 px-8 py-2.5 rounded-2xl font-bold"
+                >
+                  Post Story
+                </button>
               </div>
             </div>
 
             <div className="space-y-6">
               {posts.map((post) => (
-                <article key={post.id} className="bg-slate-900/60 border border-white/5 rounded-[2.5rem] p-7 group hover:border-white/10 transition-all duration-500">
-                  <div className="flex items-center justify-between mb-5">
-                    <div className="flex items-center gap-3">
-                      <div className="w-12 h-12 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-center font-black text-indigo-500 text-lg uppercase">{post.username?.charAt(0)}</div>
-                      <div>
-                        <h4 className="font-bold text-[16px] text-white">@{post.username}</h4>
-                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.15em]">{formatDistanceToNow(new Date(post.created_at), {addSuffix: true})}</p>
-                      </div>
+                <article key={post.id} className="bg-slate-900/60 border border-white/5 rounded-[2.5rem] p-7">
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className="w-12 h-12 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-center font-black text-indigo-500 uppercase">{post.username?.charAt(0) || 'U'}</div>
+                    <div>
+                      <h4 className="font-bold text-white">@{post.username || 'Anonymous'}</h4>
+                      <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">{formatDistanceToNow(new Date(post.created_at), {addSuffix: true})}</p>
                     </div>
                   </div>
-                  <p className="text-slate-300 text-[17px] font-medium leading-relaxed mb-6">{post.content}</p>
+                  <p className="text-slate-300 text-[17px] leading-relaxed mb-6">{post.content}</p>
                   <button 
                     onClick={() => {
                       const isLiked = likedPosts.includes(post.id);
@@ -233,12 +234,11 @@ export default function TambayHub() {
                       } else {
                         setLikedPosts(prev => [...prev, post.id]);
                         supabase.rpc('increment_likes', { row_id: post.id }).then(() => fetchGlobalPosts());
-                        toast.success("Liked!", { duration: 800 });
                       }
                     }}
-                    className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl font-bold transition-all active:scale-90 ${likedPosts.includes(post.id) ? 'bg-rose-500/10 text-rose-500' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}
+                    className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl font-bold ${likedPosts.includes(post.id) ? 'bg-rose-500/10 text-rose-500' : 'bg-white/5 text-slate-500'}`}
                   >
-                    <Heart size={20} fill={likedPosts.includes(post.id) ? "currentColor" : "none"} className={likedPosts.includes(post.id) ? "animate-bounce" : ""} />
+                    <Heart size={20} fill={likedPosts.includes(post.id) ? "currentColor" : "none"} />
                     {post.likes || 0}
                   </button>
                 </article>
@@ -246,10 +246,10 @@ export default function TambayHub() {
             </div>
           </main>
 
-          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[92%] max-w-sm h-16 bg-slate-900/90 backdrop-blur-3xl border border-white/10 rounded-full flex items-center justify-around px-8 z-[200] shadow-2xl">
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[92%] max-w-sm h-16 bg-slate-900/90 backdrop-blur-3xl border border-white/10 rounded-full flex items-center justify-around px-8 z-[200]">
              <HomeIcon size={22} className="text-indigo-500" />
              <Search size={22} className="text-slate-500" />
-             <div className="bg-indigo-600 w-12 h-12 rounded-full flex items-center justify-center text-white -translate-y-4 border-[6px] border-[#020617] shadow-xl shadow-indigo-600/20"><Plus size={26}/></div>
+             <div className="bg-indigo-600 w-12 h-12 rounded-full flex items-center justify-center text-white -translate-y-4 border-[6px] border-[#020617] shadow-xl"><Plus size={26}/></div>
              <Bell size={22} className="text-slate-500" />
              <MoreHorizontal size={22} className="text-slate-500" />
           </div>
