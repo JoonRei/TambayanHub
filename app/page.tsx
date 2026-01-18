@@ -1,0 +1,260 @@
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { Toaster, toast } from 'sonner'; 
+import { formatDistanceToNow } from 'date-fns';
+import { 
+  Plus, Search, Bell, MoreHorizontal, Home as HomeIcon,
+  LogOut, Globe, Mail, Loader2, RefreshCcw, 
+  CheckCircle2, Heart, Trash2, ImageIcon, AlertCircle
+} from 'lucide-react';
+
+export default function TambayHub() {
+  const [user, setUser] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [email, setEmail] = useState("");
+  const [otpSent, setOtpSent] = useState(false);
+  const [usernameInput, setUsernameInput] = useState("");
+  const [posts, setPosts] = useState<any[]>([]);
+  const [inputText, setInputText] = useState("");
+  const [likedPosts, setLikedPosts] = useState<number[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [countdown, setCountdown] = useState(0);
+
+  // Email Validation Logic
+  const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.toLowerCase());
+  const isEmailValid = validateEmail(email);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (countdown > 0) {
+      timer = setInterval(() => setCountdown((prev) => prev - 1), 1000);
+    }
+    return () => clearInterval(timer);
+  }, [countdown]);
+
+  useEffect(() => {
+    checkUser();
+    fetchGlobalPosts();
+    const channel = supabase.channel('global-updates').on('postgres_changes', 
+      { event: '*', schema: 'public', table: 'posts' }, () => fetchGlobalPosts()).subscribe();
+    const savedLikes = localStorage.getItem('tambay_likes');
+    if (savedLikes) setLikedPosts(JSON.parse(savedLikes));
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  async function checkUser() {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      setUser(user);
+      const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+      setProfile(prof);
+    }
+    setLoading(false);
+  }
+
+  async function fetchGlobalPosts() {
+    const { data } = await supabase.from('global_feed').select('*');
+    setPosts(data || []);
+  }
+
+  async function handleSendOTP(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!isEmailValid || countdown > 0) return;
+    
+    setActionLoading(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: { emailRedirectTo: window.location.origin }
+    });
+    
+    if (error) {
+      toast.error(error.message);
+    } else {
+      setOtpSent(true);
+      setCountdown(60);
+      toast.success("Magic Link Sent!");
+    }
+    setActionLoading(false);
+  }
+
+  // --- NEW RESET FUNCTION ---
+  function handleBackToLogin() {
+    setEmail("");        // Clears the input field text
+    setOtpSent(false);   // Returns to login screen
+    setCountdown(0);     // Resets timer
+  }
+
+  if (loading) return (
+    <div className="bg-[#020617] min-h-screen flex items-center justify-center">
+      <Loader2 className="animate-spin text-indigo-500" size={40} />
+    </div>
+  );
+
+  return (
+    <div className="bg-[#020617] min-h-screen pb-32 text-slate-100 antialiased font-sans">
+      <Toaster 
+        position="top-center" 
+        theme="dark" 
+        toastOptions={{
+          style: {
+            background: 'rgba(30, 41, 59, 0.7)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '24px',
+            textAlign: 'center',
+            display: 'flex',
+            justifyContent: 'center'
+          },
+        }}
+      />
+
+      {!user ? (
+        <div className="min-h-screen flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-slate-900/40 border border-white/10 p-12 rounded-[3.5rem] backdrop-blur-3xl shadow-2xl text-center">
+            
+            {!otpSent ? (
+              <form onSubmit={handleSendOTP} noValidate className="space-y-6">
+                <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center font-black text-3xl mx-auto mb-2 text-white shadow-lg shadow-indigo-600/20">T</div>
+                <div>
+                  <h2 className="text-3xl font-bold tracking-tighter italic">TambayHub</h2>
+                  <p className="text-slate-500 text-sm">Sign in to your account</p>
+                </div>
+                
+                <div className="relative">
+                  <input 
+                    type="text" 
+                    inputMode="email"
+                    placeholder="name@email.com" 
+                    value={email} 
+                    onChange={e => setEmail(e.target.value)} 
+                    className={`w-full bg-white/5 border rounded-2xl p-4 text-center outline-none transition-all font-bold placeholder:text-slate-600 ${
+                      email.length === 0 
+                        ? 'border-white/10' 
+                        : isEmailValid 
+                          ? 'border-green-500/50' 
+                          : 'border-rose-500/50'
+                    }`} 
+                  />
+                  {email.length > 0 && (
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                      {isEmailValid ? <CheckCircle2 size={18} className="text-green-500" /> : <AlertCircle size={18} className="text-rose-500" />}
+                    </div>
+                  )}
+                </div>
+
+                <button 
+                  type="submit"
+                  disabled={actionLoading || !isEmailValid} 
+                  className={`w-full py-4 rounded-2xl font-bold transition-all ${
+                    isEmailValid ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-600/20' : 'bg-slate-800 text-slate-500 opacity-50'
+                  }`}
+                >
+                  {actionLoading ? <Loader2 className="animate-spin mx-auto" size={20} /> : "Send Magic Link"}
+                </button>
+              </form>
+            ) : (
+              <div className="animate-in fade-in zoom-in duration-500">
+                <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <CheckCircle2 size={40} className="text-green-500" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2 text-white">Check your inbox</h2>
+                <p className="text-slate-500 text-sm mb-10 px-4 leading-relaxed">
+                  We've sent a secure login link to <span className="text-white font-bold">{email}</span>.
+                </p>
+                
+                <div className="space-y-4">
+                  <button 
+                    onClick={() => handleSendOTP()} 
+                    disabled={countdown > 0}
+                    className={`flex items-center gap-2 mx-auto text-sm font-bold px-8 py-3 rounded-2xl border border-white/5 transition-all ${
+                      countdown > 0 ? 'text-slate-600 bg-transparent' : 'text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20'
+                    }`}
+                  >
+                    <RefreshCcw size={16} className={actionLoading ? "animate-spin" : ""} />
+                    {countdown > 0 ? `Resend link in ${countdown}s` : "Resend Link"}
+                  </button>
+                  
+                  <button 
+                    onClick={handleBackToLogin} 
+                    className="block w-full text-slate-500 text-xs hover:text-white transition-colors pt-2"
+                  >
+                    Use a different email address
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* FEED SECTION REMAINS THE SAME */
+        <>
+          <nav className="bg-[#020617]/80 backdrop-blur-2xl border-b border-white/5 sticky top-0 z-[100] h-16 flex items-center justify-between px-6">
+            <div className="flex items-center gap-2 font-black text-xl italic text-white tracking-tighter">TambayHub</div>
+            <button onClick={() => supabase.auth.signOut().then(() => window.location.reload())} className="p-2.5 bg-white/5 hover:text-red-500 rounded-2xl transition-all"><LogOut size={20}/></button>
+          </nav>
+
+          <main className="max-w-xl mx-auto pt-8 px-4">
+            {/* Feed contents... */}
+            <div className="bg-slate-900/40 border border-white/10 rounded-[2.5rem] p-6 mb-10 shadow-2xl backdrop-blur-md">
+              <textarea value={inputText} onChange={e => setInputText(e.target.value)} placeholder="Ano'ng kwento?" className="w-full bg-transparent text-xl outline-none mb-4 resize-none font-medium text-white" rows={2}/>
+              <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                <button className="p-2 text-slate-600 rounded-xl"><ImageIcon size={20}/></button>
+                <button onClick={() => {
+                   if (!inputText.trim()) return;
+                   setActionLoading(true);
+                   supabase.from('posts').insert([{ content: inputText, user_id: user.id, likes: 0 }])
+                   .then(() => { toast.success("Story shared!"); setInputText(""); fetchGlobalPosts(); setActionLoading(false); });
+                }} disabled={actionLoading || !inputText.trim()} className="bg-indigo-600 px-8 py-2.5 rounded-2xl font-bold active:scale-95 transition-all shadow-lg shadow-indigo-600/20">Post Story</button>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {posts.map((post) => (
+                <article key={post.id} className="bg-slate-900/60 border border-white/5 rounded-[2.5rem] p-7 group hover:border-white/10 transition-all duration-500">
+                  <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-12 h-12 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl flex items-center justify-center font-black text-indigo-500 text-lg uppercase">{post.username?.charAt(0)}</div>
+                      <div>
+                        <h4 className="font-bold text-[16px] text-white">@{post.username}</h4>
+                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.15em]">{formatDistanceToNow(new Date(post.created_at), {addSuffix: true})}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-slate-300 text-[17px] font-medium leading-relaxed mb-6">{post.content}</p>
+                  <button 
+                    onClick={() => {
+                      const isLiked = likedPosts.includes(post.id);
+                      if (isLiked) {
+                        setLikedPosts(prev => prev.filter(id => id !== post.id));
+                        supabase.rpc('decrement_likes', { row_id: post.id }).then(() => fetchGlobalPosts());
+                      } else {
+                        setLikedPosts(prev => [...prev, post.id]);
+                        supabase.rpc('increment_likes', { row_id: post.id }).then(() => fetchGlobalPosts());
+                        toast.success("Liked!", { duration: 800 });
+                      }
+                    }}
+                    className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl font-bold transition-all active:scale-90 ${likedPosts.includes(post.id) ? 'bg-rose-500/10 text-rose-500' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}
+                  >
+                    <Heart size={20} fill={likedPosts.includes(post.id) ? "currentColor" : "none"} className={likedPosts.includes(post.id) ? "animate-bounce" : ""} />
+                    {post.likes || 0}
+                  </button>
+                </article>
+              ))}
+            </div>
+          </main>
+
+          <div className="fixed bottom-8 left-1/2 -translate-x-1/2 w-[92%] max-w-sm h-16 bg-slate-900/90 backdrop-blur-3xl border border-white/10 rounded-full flex items-center justify-around px-8 z-[200] shadow-2xl">
+             <HomeIcon size={22} className="text-indigo-500" />
+             <Search size={22} className="text-slate-500" />
+             <div className="bg-indigo-600 w-12 h-12 rounded-full flex items-center justify-center text-white -translate-y-4 border-[6px] border-[#020617] shadow-xl shadow-indigo-600/20"><Plus size={26}/></div>
+             <Bell size={22} className="text-slate-500" />
+             <MoreHorizontal size={22} className="text-slate-500" />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
